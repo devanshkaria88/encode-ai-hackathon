@@ -123,20 +123,21 @@ export class AgentService {
               result = { error: `Tool "${toolName}" failed: ${(err as Error).message}` };
             }
 
+            const safeResult = truncateToolResult(result);
             const resultStr =
-              typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+              typeof safeResult === 'string' ? safeResult : JSON.stringify(safeResult);
             const truncated =
-              resultStr.length > 6000 ? resultStr.substring(0, 6000) + '\n...(truncated)' : resultStr;
+              resultStr.length > 2000 ? resultStr.substring(0, 1900) + '..."truncated"}' : resultStr;
 
             const step: ToolCallStep = {
               tool: toolName,
               input: toolInput,
-              output: result,
+              output: safeResult,
               description: this.describeToolCall(toolName, toolInput),
             };
             steps.push(step);
 
-            this.dashboard.emitToolResult(toolName, result);
+            this.dashboard.emitToolResult(toolName, safeResult);
 
             toolResults.push({
               type: 'tool_result',
@@ -309,4 +310,31 @@ export class AgentService {
         return `Calling ${name}...`;
     }
   }
+}
+
+function truncateToolResult(result: unknown, depth = 0): unknown {
+  if (result === null || result === undefined) return result;
+  if (depth > 3) return '[nested]';
+  if (typeof result === 'string') {
+    return result.length > 300 ? result.slice(0, 300) + '...' : result;
+  }
+  if (typeof result === 'number' || typeof result === 'boolean') return result;
+  if (Array.isArray(result)) {
+    const limit = depth === 0 ? 10 : 5;
+    const sliced = result.slice(0, limit);
+    const mapped = sliced.map((item) => truncateToolResult(item, depth + 1));
+    if (result.length > limit) {
+      return [...mapped, `...(${result.length - limit} more)`];
+    }
+    return mapped;
+  }
+  if (typeof result === 'object') {
+    const obj = result as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(obj)) {
+      out[key] = truncateToolResult(val, depth + 1);
+    }
+    return out;
+  }
+  return String(result);
 }
