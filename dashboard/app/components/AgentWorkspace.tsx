@@ -1,45 +1,95 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
-import { useDashboardStore, AgentRun, ToolStep } from "@/lib/store";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useDashboardStore, AgentRun } from "@/lib/store";
 
-const TOOL_ICONS: Record<string, string> = {
-  get_active_proposals: "📋",
-  get_proposal_detail: "📄",
-  get_voting_status: "🗳",
-  get_member_vote_history: "👤",
-  get_treasury_summary: "💰",
-  get_treasury_transactions: "📊",
-  get_token_transfers: "🔗",
-  get_wallet_profile: "🔍",
-  query_data: "⚡",
-  send_group_message: "💬",
-  send_direct_message: "✉️",
-  generate_chart: "📈",
-  get_knowledge: "🧠",
-  store_knowledge: "💾",
-  log_action: "📝",
-};
+// ─── Graph Data ────────────────────────────────────────────────────
 
-const TOOL_COLORS: Record<string, string> = {
-  get_active_proposals: "#3b82f6",
-  get_proposal_detail: "#3b82f6",
-  get_voting_status: "#06b6d4",
-  get_member_vote_history: "#06b6d4",
-  get_treasury_summary: "#10b981",
-  get_treasury_transactions: "#10b981",
-  get_token_transfers: "#f59e0b",
-  get_wallet_profile: "#f59e0b",
-  query_data: "#06b6d4",
-  send_group_message: "#10b981",
-  send_direct_message: "#10b981",
-  generate_chart: "#3b82f6",
-  get_knowledge: "#a78bfa",
-  store_knowledge: "#a78bfa",
-  log_action: "#555568",
-};
+interface GraphNode {
+  id: string;
+  label: string;
+  icon: string;
+  color: string;
+  group: "governance" | "treasury" | "security" | "comms" | "knowledge" | "utility";
+  x: number;
+  y: number;
+}
 
-// ─── Pan / Zoom Canvas ──────────────────────────────────────────────
+interface GraphEdge {
+  from: string;
+  to: string;
+}
+
+const NODES: GraphNode[] = [
+  // Governance cluster (left-center)
+  { id: "get_active_proposals",    label: "Active Proposals",    icon: "📋", color: "#3b82f6", group: "governance", x: 160, y: 120 },
+  { id: "get_proposal_detail",     label: "Proposal Detail",     icon: "📄", color: "#3b82f6", group: "governance", x: 80,  y: 260 },
+  { id: "get_voting_status",       label: "Voting Status",       icon: "🗳", color: "#06b6d4", group: "governance", x: 240, y: 280 },
+  { id: "get_member_vote_history", label: "Vote History",        icon: "👤", color: "#06b6d4", group: "governance", x: 140, y: 400 },
+
+  // Treasury cluster (top-right)
+  { id: "get_treasury_summary",       label: "Treasury Summary",  icon: "💰", color: "#10b981", group: "treasury", x: 500, y: 80  },
+  { id: "get_treasury_transactions",  label: "Transactions",      icon: "📊", color: "#10b981", group: "treasury", x: 640, y: 180 },
+
+  // Security cluster (right-center)
+  { id: "get_token_transfers", label: "Token Transfers", icon: "🔗", color: "#f59e0b", group: "security", x: 680, y: 340 },
+  { id: "get_wallet_profile",  label: "Wallet Profile",  icon: "🔍", color: "#f59e0b", group: "security", x: 540, y: 420 },
+
+  // Communications (bottom-center)
+  { id: "send_group_message",  label: "Group Message",  icon: "💬", color: "#10b981", group: "comms", x: 340, y: 520 },
+  { id: "send_direct_message", label: "Direct Message", icon: "✉️", color: "#10b981", group: "comms", x: 500, y: 560 },
+
+  // Knowledge (bottom-left)
+  { id: "get_knowledge",   label: "Get Knowledge",   icon: "🧠", color: "#a78bfa", group: "knowledge", x: 100, y: 540 },
+  { id: "store_knowledge", label: "Store Knowledge", icon: "💾", color: "#a78bfa", group: "knowledge", x: 200, y: 620 },
+
+  // Utility (center / bottom-right)
+  { id: "query_data",     label: "Query Data",     icon: "⚡", color: "#06b6d4", group: "utility", x: 400, y: 300 },
+  { id: "generate_chart", label: "Generate Chart", icon: "📈", color: "#3b82f6", group: "utility", x: 620, y: 520 },
+  { id: "log_action",     label: "Log Action",     icon: "📝", color: "#555568", group: "utility", x: 400, y: 680 },
+];
+
+const EDGES: GraphEdge[] = [
+  // Governance flow
+  { from: "get_active_proposals", to: "get_proposal_detail" },
+  { from: "get_active_proposals", to: "get_voting_status" },
+  { from: "get_proposal_detail", to: "get_voting_status" },
+  { from: "get_voting_status", to: "get_member_vote_history" },
+  // Governance -> comms
+  { from: "get_member_vote_history", to: "send_direct_message" },
+  { from: "get_voting_status", to: "send_group_message" },
+  { from: "get_active_proposals", to: "send_group_message" },
+  // Treasury flow
+  { from: "get_treasury_summary", to: "get_treasury_transactions" },
+  { from: "get_treasury_summary", to: "generate_chart" },
+  { from: "get_treasury_transactions", to: "generate_chart" },
+  { from: "get_treasury_summary", to: "send_group_message" },
+  // Security flow
+  { from: "get_token_transfers", to: "get_wallet_profile" },
+  { from: "get_treasury_transactions", to: "get_token_transfers" },
+  { from: "get_wallet_profile", to: "send_group_message" },
+  { from: "get_token_transfers", to: "send_group_message" },
+  // Knowledge flow
+  { from: "get_knowledge", to: "store_knowledge" },
+  { from: "get_knowledge", to: "send_group_message" },
+  { from: "store_knowledge", to: "log_action" },
+  // Cross-domain
+  { from: "query_data", to: "send_group_message" },
+  { from: "query_data", to: "generate_chart" },
+  { from: "get_active_proposals", to: "query_data" },
+  { from: "get_treasury_summary", to: "query_data" },
+  // Comms -> log
+  { from: "send_group_message", to: "log_action" },
+  { from: "send_direct_message", to: "log_action" },
+  { from: "generate_chart", to: "send_group_message" },
+  // Knowledge -> comms
+  { from: "get_member_vote_history", to: "send_group_message" },
+  { from: "get_proposal_detail", to: "send_group_message" },
+];
+
+const NODE_RADIUS = 26;
+
+// ─── Pan / Zoom Canvas ─────────────────────────────────────────────
 
 function useCanvas() {
   const [offset, setOffset] = useState({ x: 0, y: 0 });
@@ -109,263 +159,49 @@ function useCanvas() {
   }, []);
 
   return {
-    offset,
-    scale,
-    onPointerDown,
-    onPointerMove,
-    onPointerUp,
+    offset, scale,
+    onPointerDown, onPointerMove, onPointerUp,
     onWheel,
-    onTouchStart,
-    onTouchMove,
-    onTouchEnd,
-    resetView,
-    setScale,
+    onTouchStart, onTouchMove, onTouchEnd,
+    resetView, setScale,
   };
 }
 
-// ─── Neuron Nodes ───────────────────────────────────────────────────
+// ─── Tooltip ────────────────────────────────────────────────────────
 
-function NeuronNode({ step, index }: { step: ToolStep; index: number }) {
-  const color = TOOL_COLORS[step.tool] || "#555568";
-  const icon = TOOL_ICONS[step.tool] || "⚙️";
-  const isRunning = step.status === "running";
-  const isComplete = step.status === "complete";
+function Tooltip({ node, run, x, y }: { node: GraphNode; run?: AgentRun; x: number; y: number }) {
+  const steps = run?.steps.filter((s) => s.tool === node.id) ?? [];
+  const lastStep = steps[steps.length - 1];
 
   return (
     <div
-      className="animate-slide-in"
-      style={{ animationDelay: `${index * 80}ms` }}
+      className="absolute pointer-events-none z-50"
+      style={{ left: x + 36, top: y - 10 }}
     >
-      <div className="flex items-start gap-4">
-        {/* Soma (cell body) */}
-        <div className="flex flex-col items-center shrink-0">
-          <div
-            className="w-12 h-12 rounded-full flex items-center justify-center text-base relative"
-            style={{
-              background: `radial-gradient(circle at 35% 35%, ${color}30, ${color}08)`,
-              border: `2px solid ${color}${isRunning ? "80" : "40"}`,
-              boxShadow: isRunning
-                ? `0 0 24px ${color}30, 0 0 48px ${color}10, inset 0 0 16px ${color}10`
-                : isComplete
-                ? `0 0 12px ${color}15`
-                : "none",
-            }}
-          >
-            <span className="relative z-10">{icon}</span>
-            {isRunning && (
-              <span
-                className="absolute inset-0 rounded-full animate-ping opacity-20"
-                style={{ borderColor: color, border: `1px solid ${color}` }}
-              />
-            )}
-          </div>
+      <div
+        className="rounded-lg px-3 py-2 text-[10px] max-w-[220px] shadow-xl"
+        style={{
+          background: "#14141eee",
+          border: `1px solid ${node.color}40`,
+          boxShadow: `0 0 20px ${node.color}15`,
+        }}
+      >
+        <div className="font-bold uppercase tracking-widest mb-1" style={{ color: node.color }}>
+          {node.label}
         </div>
-
-        {/* Dendrite body */}
-        <div
-          className="flex-1 min-w-0 rounded-xl px-4 py-3 relative"
-          style={{
-            background: `linear-gradient(135deg, ${color}08 0%, ${color}03 100%)`,
-            border: `1px solid ${color}${isRunning ? "35" : "18"}`,
-            boxShadow: isRunning
-              ? `0 4px 24px ${color}12`
-              : "none",
-          }}
-        >
-          <div className="flex items-center gap-2">
-            <span
-              className="text-[10px] font-bold uppercase tracking-widest"
-              style={{ color }}
-            >
-              {step.tool.replace(/_/g, " ")}
-            </span>
-            {isRunning && (
-              <span className="flex gap-0.5">
-                <span className="w-1 h-1 rounded-full animate-pulse-dot" style={{ backgroundColor: color, animationDelay: "0ms" }} />
-                <span className="w-1 h-1 rounded-full animate-pulse-dot" style={{ backgroundColor: color, animationDelay: "200ms" }} />
-                <span className="w-1 h-1 rounded-full animate-pulse-dot" style={{ backgroundColor: color, animationDelay: "400ms" }} />
-              </span>
+        {lastStep ? (
+          <>
+            <p className="text-[#8888a0] leading-relaxed">{lastStep.description}</p>
+            {lastStep.status === "complete" && lastStep.result && (
+              <pre className="text-[#555568] mt-1 max-h-16 overflow-hidden text-[8px] leading-relaxed">
+                {truncate(lastStep.result)}
+              </pre>
             )}
-            {isComplete && (
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke={color} strokeWidth={3}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-            )}
-          </div>
-          <p className="text-[11px] text-[#8888a0] mt-1 leading-relaxed">
-            {step.description}
-          </p>
-
-          {isComplete && step.result && (
-            <div
-              className="mt-2 pt-2 text-[9px] text-[#555568] max-h-20 overflow-hidden leading-relaxed font-light"
-              style={{ borderTop: `1px solid ${color}15` }}
-            >
-              {truncateResult(step.result)}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Axon({ color, active }: { color: string; active: boolean }) {
-  return (
-    <div className="flex items-center pl-[22px] h-8">
-      <svg width="4" height="32" viewBox="0 0 4 32" className="overflow-visible">
-        <line
-          x1="2" y1="0" x2="2" y2="32"
-          stroke={color}
-          strokeWidth={active ? 2 : 1}
-          strokeDasharray={active ? "none" : "3 4"}
-          opacity={active ? 0.5 : 0.2}
-        />
-        {active && (
-          <circle r="2" fill={color} opacity="0.8">
-            <animateMotion
-              dur="0.8s"
-              repeatCount="indefinite"
-              path="M2,0 L2,32"
-            />
-          </circle>
+          </>
+        ) : (
+          <p className="text-[#555568]">Not visited in this run</p>
         )}
-      </svg>
-    </div>
-  );
-}
-
-function TriggerNeuron({ trigger }: { trigger: string }) {
-  const short = trigger.length > 80 ? trigger.slice(0, 80) + "..." : trigger;
-  return (
-    <div className="animate-slide-in flex items-start gap-4">
-      <div className="flex flex-col items-center shrink-0">
-        <div
-          className="w-12 h-12 rounded-full flex items-center justify-center relative"
-          style={{
-            background: "radial-gradient(circle at 35% 35%, #10b98130, #10b98108)",
-            border: "2px solid #10b98150",
-            boxShadow: "0 0 20px #10b98120, 0 0 40px #10b98108, inset 0 0 12px #10b98110",
-          }}
-        >
-          <svg className="w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
-          </svg>
-        </div>
       </div>
-      <div
-        className="flex-1 min-w-0 rounded-xl px-4 py-3"
-        style={{
-          background: "linear-gradient(135deg, #10b98108 0%, #10b98103 100%)",
-          border: "1px solid #10b98125",
-          boxShadow: "0 4px 24px #10b98108",
-        }}
-      >
-        <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">
-          Signal Input
-        </span>
-        <p className="text-[11px] text-[#8888a0] mt-1 leading-relaxed">
-          {short}
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function ResponseNeuron({ response, status }: { response?: string; status: string }) {
-  if (status === "running") {
-    return (
-      <div className="animate-slide-in flex items-start gap-4">
-        <div className="flex flex-col items-center shrink-0">
-          <div className="w-12 h-12 rounded-full border-2 border-dashed border-[#2d2d42] flex items-center justify-center">
-            <span className="w-2 h-2 rounded-full bg-[#06b6d4] animate-pulse-dot" />
-          </div>
-        </div>
-        <div className="flex-1 rounded-xl px-4 py-4 border border-dashed border-[#2d2d42] bg-[#14141e] flex items-center gap-2">
-          <span className="text-[11px] text-[#555568]">
-            Processing signal...
-          </span>
-        </div>
-      </div>
-    );
-  }
-
-  const isError = status === "error";
-  const c = isError ? "#ef4444" : "#10b981";
-
-  return (
-    <div className="animate-slide-in flex items-start gap-4">
-      <div className="flex flex-col items-center shrink-0">
-        <div
-          className="w-12 h-12 rounded-full flex items-center justify-center"
-          style={{
-            background: `radial-gradient(circle at 35% 35%, ${c}30, ${c}08)`,
-            border: `2px solid ${c}50`,
-            boxShadow: `0 0 20px ${c}20, 0 0 40px ${c}08`,
-          }}
-        >
-          {isError ? (
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke={c} strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          ) : (
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke={c} strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-            </svg>
-          )}
-        </div>
-      </div>
-      <div
-        className="flex-1 min-w-0 rounded-xl px-4 py-3"
-        style={{
-          background: `linear-gradient(135deg, ${c}08 0%, ${c}03 100%)`,
-          border: `1px solid ${c}25`,
-        }}
-      >
-        <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: c }}>
-          {isError ? "Signal Error" : "Output Signal"}
-        </span>
-        <p className="text-[11px] text-[#8888a0] mt-1 leading-relaxed whitespace-pre-wrap max-h-48 overflow-y-auto scrollbar-thin">
-          {response && response.length > 600 ? response.slice(0, 600) + "..." : response}
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function RunView({ run }: { run: AgentRun }) {
-  const lastStepIdx = run.steps.length - 1;
-  return (
-    <div className="w-[520px]">
-      <TriggerNeuron trigger={run.trigger} />
-
-      {run.steps.map((step, i) => {
-        const nextColor = TOOL_COLORS[step.tool] || "#555568";
-        const isLast = i === lastStepIdx && run.status === "running";
-        return (
-          <div key={step.id}>
-            <Axon color={nextColor} active={step.status === "running"} />
-            <NeuronNode step={step} index={i} />
-          </div>
-        );
-      })}
-
-      {(run.status !== "running" || run.steps.length > 0) && (
-        <>
-          <Axon
-            color={run.status === "error" ? "#ef4444" : "#10b981"}
-            active={run.status === "running"}
-          />
-          <ResponseNeuron response={run.response} status={run.status} />
-        </>
-      )}
-
-      {run.status === "running" && run.steps.length === 0 && (
-        <>
-          <Axon color="#06b6d4" active={true} />
-          <ResponseNeuron status="running" />
-        </>
-      )}
     </div>
   );
 }
@@ -376,31 +212,66 @@ export function AgentWorkspace() {
   const runs = useDashboardStore((s) => s.runs);
   const activeRunId = useDashboardStore((s) => s.activeRunId);
   const canvas = useCanvas();
-  const containerRef = useRef<HTMLDivElement>(null);
+  const [hoveredNode, setHoveredNode] = useState<string | null>(null);
 
-  const displayRun =
-    runs.find((r) => r.id === activeRunId) || runs[runs.length - 1];
+  const displayRun = runs.find((r) => r.id === activeRunId) || runs[runs.length - 1];
 
-  // Auto-scroll the canvas down when new steps arrive
-  useEffect(() => {
-    if (displayRun?.status === "running" && displayRun.steps.length > 0) {
-      const stepHeight = 100;
-      const targetY = -(displayRun.steps.length * stepHeight - 200);
-      // Only auto-pan if user hasn't dragged far
+  const visitedSet = useMemo(() => {
+    if (!displayRun) return new Set<string>();
+    return new Set(displayRun.steps.map((s) => s.tool));
+  }, [displayRun]);
+
+  const activeNode = useMemo(() => {
+    if (!displayRun || displayRun.status !== "running") return null;
+    const running = displayRun.steps.find((s) => s.status === "running");
+    return running?.tool ?? null;
+  }, [displayRun]);
+
+  const traversalPath = useMemo(() => {
+    if (!displayRun) return [] as string[];
+    return displayRun.steps.map((s) => s.tool);
+  }, [displayRun]);
+
+  // Build set of lit-up edges based on the traversal order
+  const litEdges = useMemo(() => {
+    const set = new Set<string>();
+    for (let i = 0; i < traversalPath.length - 1; i++) {
+      const from = traversalPath[i];
+      const to = traversalPath[i + 1];
+      // Check if a direct edge exists
+      const direct = EDGES.find(
+        (e) => (e.from === from && e.to === to) || (e.from === to && e.to === from)
+      );
+      if (direct) {
+        set.add(`${from}->${to}`);
+      } else {
+        set.add(`${from}~>${to}`);
+      }
     }
-  }, [displayRun?.steps.length, displayRun?.status]);
+    return set;
+  }, [traversalPath]);
+
+  const nodeMap = useMemo(() => {
+    const m: Record<string, GraphNode> = {};
+    NODES.forEach((n) => (m[n.id] = n));
+    return m;
+  }, []);
+
+  const hoveredGraphNode = hoveredNode ? nodeMap[hoveredNode] : null;
 
   return (
     <div className="h-full flex flex-col bg-[#0a0a0f]">
-      {/* Header bar */}
+      {/* Header */}
       <div className="px-5 py-3 border-b border-[#1e1e2e] bg-[#0a0a0f]/90 backdrop-blur-sm shrink-0 z-20 relative">
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-[11px] font-semibold text-[#555568] uppercase tracking-widest">
-              Neural Workspace
+              Agent Neural Graph
             </h2>
             <p className="text-[10px] text-[#555568] mt-0.5">
-              Pan: drag &middot; Zoom: scroll/pinch &middot; Reset: double-click
+              {displayRun
+                ? `${visitedSet.size}/${NODES.length} nodes visited · ${displayRun.steps.length} steps`
+                : "All tool nodes shown · path lights up on agent run"}
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -421,18 +292,14 @@ export function AgentWorkspace() {
               <button
                 onClick={() => canvas.setScale((s) => Math.min(3, s + 0.15))}
                 className="px-2 py-1 text-[10px] text-[#8888a0] hover:text-white hover:bg-[#1a1a24] transition-colors"
-              >
-                +
-              </button>
+              >+</button>
               <span className="text-[9px] text-[#555568] px-1 min-w-[36px] text-center">
                 {Math.round(canvas.scale * 100)}%
               </span>
               <button
                 onClick={() => canvas.setScale((s) => Math.max(0.2, s - 0.15))}
                 className="px-2 py-1 text-[10px] text-[#8888a0] hover:text-white hover:bg-[#1a1a24] transition-colors"
-              >
-                -
-              </button>
+              >-</button>
             </div>
           </div>
         </div>
@@ -442,9 +309,7 @@ export function AgentWorkspace() {
             {runs.map((r, i) => (
               <button
                 key={r.id}
-                onClick={() =>
-                  useDashboardStore.setState({ activeRunId: r.id })
-                }
+                onClick={() => useDashboardStore.setState({ activeRunId: r.id })}
                 className={`text-[9px] px-2 py-0.5 rounded-md border transition-colors shrink-0 cursor-pointer ${
                   r.id === displayRun?.id
                     ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-400"
@@ -458,10 +323,10 @@ export function AgentWorkspace() {
         )}
       </div>
 
-      {/* Canvas area */}
+      {/* Canvas */}
       <div
-        ref={containerRef}
-        className="flex-1 overflow-hidden cursor-grab active:cursor-grabbing dot-grid relative"
+        className="flex-1 overflow-hidden cursor-grab active:cursor-grabbing relative"
+        style={{ background: "#08080d", touchAction: "none" }}
         onPointerDown={canvas.onPointerDown}
         onPointerMove={canvas.onPointerMove}
         onPointerUp={canvas.onPointerUp}
@@ -470,38 +335,238 @@ export function AgentWorkspace() {
         onTouchMove={canvas.onTouchMove}
         onTouchEnd={canvas.onTouchEnd}
         onDoubleClick={canvas.resetView}
-        style={{ touchAction: "none" }}
       >
         <div
           className="absolute"
           style={{
             transform: `translate(${canvas.offset.x}px, ${canvas.offset.y}px) scale(${canvas.scale})`,
             transformOrigin: "0 0",
-            transition: "none",
           }}
         >
-          <div className="p-10">
-            {!displayRun ? (
-              <div className="flex flex-col items-center justify-center gap-4 pt-40 pl-40">
+          <svg
+            width="800"
+            height="780"
+            className="overflow-visible"
+            style={{ position: "absolute", top: 0, left: 0 }}
+          >
+            <defs>
+              <filter id="glow-edge">
+                <feGaussianBlur stdDeviation="3" result="blur" />
+                <feMerge>
+                  <feMergeNode in="blur" />
+                  <feMergeNode in="SourceGraphic" />
+                </feMerge>
+              </filter>
+              <filter id="glow-node">
+                <feGaussianBlur stdDeviation="6" result="blur" />
+                <feMerge>
+                  <feMergeNode in="blur" />
+                  <feMergeNode in="SourceGraphic" />
+                </feMerge>
+              </filter>
+            </defs>
+
+            {/* Background edges (all connections, dim) */}
+            {EDGES.map((edge, i) => {
+              const fromNode = nodeMap[edge.from];
+              const toNode = nodeMap[edge.to];
+              if (!fromNode || !toNode) return null;
+
+              const edgeKey = `${edge.from}->${edge.to}`;
+              const reverseKey = `${edge.to}->${edge.from}`;
+              const isLit = litEdges.has(edgeKey) || litEdges.has(reverseKey);
+
+              return (
+                <line
+                  key={i}
+                  x1={fromNode.x}
+                  y1={fromNode.y}
+                  x2={toNode.x}
+                  y2={toNode.y}
+                  stroke={isLit ? "#ffffff" : "#1e1e2e"}
+                  strokeWidth={isLit ? 2 : 0.5}
+                  opacity={isLit ? 0.6 : 0.4}
+                  filter={isLit ? "url(#glow-edge)" : undefined}
+                />
+              );
+            })}
+
+            {/* Traversal path: animated dashed line following the agent's sequence */}
+            {traversalPath.length > 1 &&
+              traversalPath.slice(0, -1).map((fromId, i) => {
+                const toId = traversalPath[i + 1];
+                const fromN = nodeMap[fromId];
+                const toN = nodeMap[toId];
+                if (!fromN || !toN) return null;
+
+                const isActive =
+                  displayRun?.status === "running" &&
+                  i === traversalPath.length - 2;
+
+                return (
+                  <g key={`path-${i}`}>
+                    <line
+                      x1={fromN.x}
+                      y1={fromN.y}
+                      x2={toN.x}
+                      y2={toN.y}
+                      stroke={toN.color}
+                      strokeWidth={2.5}
+                      opacity={0.7}
+                      strokeDasharray={isActive ? "6 4" : "none"}
+                      filter="url(#glow-edge)"
+                    >
+                      {isActive && (
+                        <animate
+                          attributeName="stroke-dashoffset"
+                          values="20;0"
+                          dur="0.6s"
+                          repeatCount="indefinite"
+                        />
+                      )}
+                    </line>
+                    {isActive && (
+                      <circle r="3" fill={toN.color} opacity="0.9">
+                        <animateMotion
+                          dur="0.8s"
+                          repeatCount="indefinite"
+                          path={`M${fromN.x},${fromN.y} L${toN.x},${toN.y}`}
+                        />
+                      </circle>
+                    )}
+                  </g>
+                );
+              })}
+          </svg>
+
+          {/* Nodes rendered as HTML over the SVG */}
+          {NODES.map((node) => {
+            const isVisited = visitedSet.has(node.id);
+            const isActive = activeNode === node.id;
+            const stepIndex = traversalPath.indexOf(node.id);
+            const isDim = !isVisited && !isActive;
+
+            return (
+              <div
+                key={node.id}
+                className="absolute flex flex-col items-center"
+                style={{
+                  left: node.x - NODE_RADIUS,
+                  top: node.y - NODE_RADIUS,
+                  width: NODE_RADIUS * 2,
+                }}
+                onMouseEnter={() => setHoveredNode(node.id)}
+                onMouseLeave={() => setHoveredNode(null)}
+              >
+                {/* Node circle */}
                 <div
-                  className="w-20 h-20 rounded-full border-2 border-dashed border-[#2d2d42] flex items-center justify-center"
+                  className="flex items-center justify-center rounded-full relative select-none"
+                  style={{
+                    width: NODE_RADIUS * 2,
+                    height: NODE_RADIUS * 2,
+                    background: isActive
+                      ? `radial-gradient(circle at 40% 35%, ${node.color}60, ${node.color}20)`
+                      : isVisited
+                      ? `radial-gradient(circle at 40% 35%, ${node.color}40, ${node.color}10)`
+                      : `radial-gradient(circle at 40% 35%, #1a1a2480, #11111840)`,
+                    border: `2px solid ${
+                      isActive
+                        ? node.color
+                        : isVisited
+                        ? node.color + "80"
+                        : "#1e1e2e"
+                    }`,
+                    boxShadow: isActive
+                      ? `0 0 30px ${node.color}50, 0 0 60px ${node.color}20, inset 0 0 20px ${node.color}15`
+                      : isVisited
+                      ? `0 0 16px ${node.color}25`
+                      : "none",
+                    transition: "all 0.4s ease",
+                  }}
                 >
-                  <svg className="w-8 h-8 text-[#555568]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
-                  </svg>
+                  <span
+                    className="text-sm relative z-10"
+                    style={{ filter: isDim ? "grayscale(1) opacity(0.3)" : "none" }}
+                  >
+                    {node.icon}
+                  </span>
+
+                  {/* Active ping */}
+                  {isActive && (
+                    <span
+                      className="absolute inset-[-4px] rounded-full animate-ping"
+                      style={{
+                        border: `1.5px solid ${node.color}`,
+                        opacity: 0.3,
+                      }}
+                    />
+                  )}
+
+                  {/* Step order badge */}
+                  {isVisited && stepIndex >= 0 && (
+                    <span
+                      className="absolute -top-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-bold"
+                      style={{
+                        backgroundColor: node.color,
+                        color: "#000",
+                        boxShadow: `0 0 8px ${node.color}60`,
+                      }}
+                    >
+                      {stepIndex + 1}
+                    </span>
+                  )}
                 </div>
-                <div className="text-center">
-                  <p className="text-[13px] text-[#8888a0]">
-                    Neural network idle
-                  </p>
-                  <p className="text-[10px] text-[#555568] mt-1">
-                    Trigger an action to see the agent think
-                  </p>
-                </div>
+
+                {/* Label */}
+                <span
+                  className="text-[8px] mt-1 text-center leading-tight uppercase tracking-wider font-semibold whitespace-nowrap"
+                  style={{
+                    color: isActive
+                      ? node.color
+                      : isVisited
+                      ? node.color + "cc"
+                      : "#333344",
+                    transition: "color 0.4s ease",
+                  }}
+                >
+                  {node.label}
+                </span>
               </div>
-            ) : (
-              <RunView run={displayRun} />
-            )}
+            );
+          })}
+
+          {/* Tooltip */}
+          {hoveredGraphNode && (
+            <Tooltip
+              node={hoveredGraphNode}
+              run={displayRun}
+              x={hoveredGraphNode.x}
+              y={hoveredGraphNode.y}
+            />
+          )}
+        </div>
+
+        {/* Legend (fixed position) */}
+        <div className="absolute bottom-4 left-4 flex flex-col gap-1.5 bg-[#0a0a0f]/80 backdrop-blur-sm rounded-lg px-3 py-2 border border-[#1e1e2e] z-30">
+          <div className="flex items-center gap-2">
+            <span className="w-3 h-3 rounded-full" style={{ background: "radial-gradient(circle, #ffffff60, #ffffff20)", border: "1.5px solid #ffffff" }} />
+            <span className="text-[8px] text-[#8888a0] uppercase tracking-wider">Currently Active</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-3 h-3 rounded-full" style={{ background: "radial-gradient(circle, #10b98140, #10b98110)", border: "1.5px solid #10b98180" }} />
+            <span className="text-[8px] text-[#8888a0] uppercase tracking-wider">Visited</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-3 h-3 rounded-full" style={{ background: "radial-gradient(circle, #1a1a2480, #11111840)", border: "1.5px solid #1e1e2e" }} />
+            <span className="text-[8px] text-[#8888a0] uppercase tracking-wider">Unvisited</span>
+          </div>
+          <div className="flex items-center gap-2 mt-1 pt-1 border-t border-[#1e1e2e]">
+            <svg width="16" height="2"><line x1="0" y1="1" x2="16" y2="1" stroke="#ffffff" strokeWidth="2" opacity="0.5" /></svg>
+            <span className="text-[8px] text-[#8888a0] uppercase tracking-wider">Traversal Path</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <svg width="16" height="2"><line x1="0" y1="1" x2="16" y2="1" stroke="#1e1e2e" strokeWidth="1" /></svg>
+            <span className="text-[8px] text-[#8888a0] uppercase tracking-wider">Possible Edge</span>
           </div>
         </div>
       </div>
@@ -509,8 +574,7 @@ export function AgentWorkspace() {
   );
 }
 
-function truncateResult(result: unknown): string {
-  const str =
-    typeof result === "string" ? result : JSON.stringify(result, null, 1);
+function truncate(result: unknown): string {
+  const str = typeof result === "string" ? result : JSON.stringify(result, null, 1);
   return str.length > 200 ? str.slice(0, 200) + "..." : str;
 }
